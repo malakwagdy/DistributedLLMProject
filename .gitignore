@@ -2,3 +2,11 @@
 .venv
 .vscode/
 .DS_Store
+__pycache__/
+*.pyc
+logs/
+.env
+*.log
+*.log.*
+*.docx
+*.pdf

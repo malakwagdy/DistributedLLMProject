@@ -2,19 +2,50 @@ services:
   redis:
     image: redis:alpine
 
+  master:
+    build: ./master
+    ports:
+      - "8001:8001"
+    environment:
+      - SCHEDULER_STRATEGY=least_connections
+      - HEARTBEAT_TIMEOUT_SECONDS=8
+      - PROCESSING_STALE_SECONDS=45
+      - MAX_ATTEMPTS=3
+    depends_on:
+      - redis
+
   gateway:
     build: ./gateway
     ports:
       - "8000:8000"
-    command: uvicorn main:app --host 0.0.0.0 --port 8000
+    environment:
+      - REQUEST_TIMEOUT_SECONDS=120
     depends_on:
       - redis
+      - master
 
   worker:
     build: ./worker
+    environment:
+      - OLLAMA_URL=http://host.docker.internal:11434
+      - OLLAMA_MODEL=phi3
+      - HEARTBEAT_INTERVAL_SECONDS=2
+      - HEARTBEAT_TTL_SECONDS=8
+      - RESULT_TTL_SECONDS=300
     depends_on:
       - redis
-    deploy:
-      replicas: 3  # This creates 3 distributed worker nodes!
+      - master
     extra_hosts:
       - "host.docker.internal:host-gateway"
+
+  worker_remote:
+    build: ./worker
+    environment:
+      - OLLAMA_URL=${REMOTE_OLLAMA_URL}
+      - OLLAMA_MODEL=phi3:mini
+      - HEARTBEAT_INTERVAL_SECONDS=2
+      - HEARTBEAT_TTL_SECONDS=8
+      - RESULT_TTL_SECONDS=300
+    depends_on:
+      - redis
+      - master

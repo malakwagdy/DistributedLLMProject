@@ -1,0 +1,14 @@
+Distributed computing is a model in which components located on networked computers communicate and coordinate their actions.
+Load balancing strategies include round robin, least connections, and load-aware routing.
+Round robin distributes requests sequentially and is simple but may ignore worker capacity differences.
+Least-connections routing sends traffic to the worker with the smallest number of active tasks.
+Load-aware routing considers active tasks, queue depth, and resource pressure to improve utilization.
+Fault tolerance in distributed systems requires failure detection and task reassignment.
+Heartbeat signals are commonly used by controllers to monitor worker liveness.
+Task durability can be achieved with processing queues and recovery logic for abandoned tasks.
+Retrieval-Augmented Generation retrieves relevant context from a knowledge base before LLM inference.
+TF-IDF is a lightweight retrieval method for ranking relevant documents by term importance.
+GPU clusters can be represented as multiple inference endpoints, each mapped to a worker node.
+Throughput and latency are key performance metrics during load testing.
+Scalability validation should include increasing concurrent requests from 100 to 1000 users.
+Node failure simulation can be done by stopping one worker process during active load.
