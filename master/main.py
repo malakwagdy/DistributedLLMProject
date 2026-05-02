@@ -8,7 +8,7 @@ from fastapi import FastAPI
 import redis.asyncio as redis
 
 app = FastAPI()
-r = redis.from_url("redis://redis:6379/0", decode_responses=True)
+r = redis.from_url(os.getenv("REDIS_URL", "redis://redis:6379/0"), decode_responses=True)
 
 HEARTBEAT_TIMEOUT_SECONDS = int(os.getenv("HEARTBEAT_TIMEOUT_SECONDS", "8"))
 PROCESSING_STALE_SECONDS = int(os.getenv("PROCESSING_STALE_SECONDS", "45"))

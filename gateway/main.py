@@ -6,7 +6,7 @@ import asyncio
 import os
 
 app = FastAPI()
-r = redis.from_url("redis://redis:6379/0", decode_responses=True)
+r = redis.from_url(os.getenv("REDIS_URL", "redis://redis:6379/0"), decode_responses=True)
 REQUEST_TIMEOUT_SECONDS = int(os.getenv("REQUEST_TIMEOUT_SECONDS", "120"))
 
 
