@@ -6,6 +6,7 @@ import os
 import threading
 
 from rag import retrieve_context
+from performance_monitor import log_performance, store_metrics_to_redis
 
 # r = redis.Redis(host="redis", port=6379, db=0, decode_responses=True)
 import urllib.parse
@@ -28,7 +29,7 @@ RESULT_TTL_SECONDS = int(os.getenv("RESULT_TTL_SECONDS", "300"))
 def process_with_llm(prompt):
     # Each worker can target a different endpoint to simulate/enable GPU cluster routing.
     url = os.getenv("OLLAMA_URL", "http://host.docker.internal:11434") + "/api/generate"
-    model = os.getenv("OLLAMA_MODEL", "smollm2")
+    model = os.getenv("OLLAMA_MODEL", "smollm:135m")
     data = {"model": model, "prompt": prompt, "stream": False}
     response = requests.post(url, json=data, timeout=120)
     return response.json().get("response", "Error processing")
@@ -38,6 +39,11 @@ def heartbeat_loop():
     while True:
         r.setex(f"worker:{WORKER_ID}:heartbeat", HEARTBEAT_TTL_SECONDS, str(time.time()))
         r.set(f"worker:{WORKER_ID}:endpoint", os.getenv("OLLAMA_URL", "http://host.docker.internal:11434"))
+        
+        # Log performance metrics every heartbeat
+        metrics = log_performance(WORKER_ID)
+        store_metrics_to_redis(r, WORKER_ID, metrics)
+        
         time.sleep(HEARTBEAT_INTERVAL_SECONDS)
 
 
