@@ -2,3 +2,4 @@ redis
 requests
 scikit-learn
 psutil
+gputil
