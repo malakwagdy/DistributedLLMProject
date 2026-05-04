@@ -18,7 +18,7 @@ def log_performance(worker_id):
             gpus = GPUtil.getGPUs()
             if gpus:
                 gpu = gpus[0]  # First GPU
-                gpu_text = f"GPU: {gpu.load*100:.1f}% | Temp: {gpu.temperature}°C"
+                gpu_text = f"GPU: {gpu.load*100:.1f}%"
         except:
             pass
     

@@ -10,7 +10,7 @@ docker compose -f docker-compose.worker.yml up --build --scale worker=10
 ### 2. Watch Logs
 You'll see:
 ```
-[worker-1] CPU: 45.2% | GPU: 78.5% | Temp: 72°C
+[worker-1] CPU: 45.2% | GPU: 78.5%
 [worker-2] CPU: 12.5% | No GPU
 ```
 

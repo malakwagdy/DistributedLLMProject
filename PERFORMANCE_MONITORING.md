@@ -6,7 +6,7 @@ Super simple CPU and GPU monitoring for all workers.
 
 Logs CPU and GPU usage every 2 seconds:
 ```
-[worker-1] CPU: 45.2% | GPU: 78.5% | Temp: 72°C
+[worker-1] CPU: 45.2% | GPU: 78.5%
 [worker-2] CPU: 12.5% | No GPU
 ```
 
