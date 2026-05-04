@@ -1,4 +1,4 @@
-"""Simple Performance Monitor - CPU, Memory, GPU"""
+"""Simple Performance Monitor - CPU and GPU"""
 import psutil
 
 try:
@@ -8,9 +8,8 @@ except:
     GPU_AVAILABLE = False
 
 def log_performance(worker_id):
-    """Log CPU, memory, and GPU usage"""
+    """Log CPU and GPU usage"""
     cpu = psutil.cpu_percent(interval=0.1)
-    mem = psutil.virtual_memory()
     
     # Get GPU info if available
     gpu_text = "No GPU"
@@ -23,6 +22,6 @@ def log_performance(worker_id):
         except:
             pass
     
-    print(f"[{worker_id}] CPU: {cpu:.1f}% | Memory: {mem.percent:.1f}% | {gpu_text}")
+    print(f"[{worker_id}] CPU: {cpu:.1f}% | {gpu_text}")
     
-    return {"cpu": cpu, "memory": mem.percent}
+    return {"cpu": cpu}
