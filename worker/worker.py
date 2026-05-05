@@ -4,10 +4,22 @@ import requests
 import time
 import os
 import threading
+import traceback
 
 from rag import retrieve_context
 
-r = redis.Redis(host="redis", port=6379, db=0, decode_responses=True)
+# r = redis.Redis(host="redis", port=6379, db=0, decode_responses=True)
+import urllib.parse
+
+_redis_url = os.getenv("REDIS_URL", "redis://redis:6379")
+_parsed = urllib.parse.urlparse(_redis_url)
+r = redis.Redis(
+    host=_parsed.hostname,
+    port=_parsed.port or 6379,
+    db=0,
+    decode_responses=True
+)
+print(f"REDIS_URL = {os.getenv('REDIS_URL', 'NOT SET')}")
 WORKER_ID = os.getenv("HOSTNAME", "worker-unknown")
 HEARTBEAT_INTERVAL_SECONDS = int(os.getenv("HEARTBEAT_INTERVAL_SECONDS", "2"))
 HEARTBEAT_TTL_SECONDS = int(os.getenv("HEARTBEAT_TTL_SECONDS", "8"))
@@ -17,7 +29,7 @@ RESULT_TTL_SECONDS = int(os.getenv("RESULT_TTL_SECONDS", "300"))
 def process_with_llm(prompt):
     # Each worker can target a different endpoint to simulate/enable GPU cluster routing.
     url = os.getenv("OLLAMA_URL", "http://host.docker.internal:11434") + "/api/generate"
-    model = os.getenv("OLLAMA_MODEL", "phi3")
+    model = os.getenv("OLLAMA_MODEL", "smollm2")
     data = {"model": model, "prompt": prompt, "stream": False}
     response = requests.post(url, json=data, timeout=120)
     return response.json().get("response", "Error processing")
@@ -73,7 +85,11 @@ while True:
     try:
         process_one_task(task_payload)
     except Exception as exc:  # noqa: BLE001
-        print(f"Worker {WORKER_ID} failed job_id={job_id} error={exc}")
+        print(
+            f"Worker {WORKER_ID} failed job_id={job_id} "
+            f"error_type={type(exc).__name__} error_repr={exc!r}"
+        )
+        print(traceback.format_exc())
         r.setex(
             f"result:{job_id}",
             RESULT_TTL_SECONDS,

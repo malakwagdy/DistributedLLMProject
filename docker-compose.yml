@@ -28,7 +28,7 @@ services:
     build: ./worker
     environment:
       - OLLAMA_URL=http://host.docker.internal:11434
-      - OLLAMA_MODEL=phi3
+      - OLLAMA_MODEL=smollm2
       - HEARTBEAT_INTERVAL_SECONDS=2
       - HEARTBEAT_TTL_SECONDS=8
       - RESULT_TTL_SECONDS=300
@@ -49,7 +49,7 @@ services:
     build: ./worker
     environment:
       - OLLAMA_URL=${REMOTE_OLLAMA_URL}
-      - OLLAMA_MODEL=phi3:mini
+      - OLLAMA_MODEL=smollm2
       - HEARTBEAT_INTERVAL_SECONDS=2
       - HEARTBEAT_TTL_SECONDS=8
       - RESULT_TTL_SECONDS=300

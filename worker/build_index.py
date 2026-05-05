@@ -1,5 +1,5 @@
 """
-Offline RAG index build: load documents, chunk, embed, write FAISS + chunks.pkl + manifest.json.
+Offline RAG index build with LangChain: load docs, chunk, embed, and write FAISS artifacts.
 
 Run from repo root or worker dir:
   python build_index.py
@@ -15,55 +15,82 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import pickle
 import sys
 from pathlib import Path
 
-import faiss
-import numpy as np
-from sentence_transformers import SentenceTransformer
+from langchain_community.document_loaders import TextLoader
+from langchain_community.vectorstores import FAISS
+from langchain_ollama import OllamaEmbeddings
+from langchain_core.documents import Document
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 
-DEFAULT_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
+DEFAULT_MODEL = "nomic-embed-text"
 WORKER_DIR = Path(__file__).resolve().parent
 KB_DIR = WORKER_DIR / "kb_docs"
 LEGACY_KB = WORKER_DIR / "knowledge_base.txt"
 OUTPUT_DIR = WORKER_DIR / "rag_data"
+ENV_KEYS = (
+    "RAG_S3_ENDPOINT",
+    "RAG_S3_ACCESS_KEY_ID",
+    "RAG_S3_SECRET_ACCESS_KEY",
+    "RAG_S3_BUCKET",
+)
 
 
-def chunk_text(text: str, chunk_size: int = 700, overlap: int = 120) -> list[str]:
-    text = text.strip()
-    if not text:
-        return []
-    chunks: list[str] = []
-    start = 0
-    n = len(text)
-    while start < n:
-        end = min(start + chunk_size, n)
-        piece = text[start:end].strip()
-        if piece:
-            chunks.append(piece)
-        if end == n:
-            break
-        start = max(end - overlap, start + 1)
-    return chunks
+def _env_non_empty(key: str, default: str | None = None) -> str | None:
+    value = os.getenv(key)
+    if value is None:
+        return default
+    value = value.strip()
+    return value if value else default
 
 
-def load_documents() -> list[dict[str, str]]:
-    docs: list[dict[str, str]] = []
+def _load_dotenv_if_present() -> None:
+    # Direct python execution does not auto-load .env; compose usually does.
+    for path in (WORKER_DIR.parent / ".env", WORKER_DIR / ".env"):
+        if not path.is_file():
+            continue
+        for raw_line in path.read_text(encoding="utf-8").splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith("#"):
+                continue
+            if line.startswith("export "):
+                line = line[len("export ") :].strip()
+            if "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            key = key.strip()
+            value = value.strip().strip('"').strip("'")
+            if key and key not in os.environ:
+                os.environ[key] = value
+
+
+def load_documents() -> list[Document]:
+    docs: list[Document] = []
     txt_files = sorted(KB_DIR.glob("*.txt"))
     if txt_files:
         for path in txt_files:
-            raw = path.read_text(encoding="utf-8", errors="ignore").strip()
-            if raw:
-                docs.append({"source": path.name, "text": raw})
+            loaded = TextLoader(
+                str(path),
+                encoding="utf-8",
+                autodetect_encoding=True,
+            ).load()
+            for doc in loaded:
+                doc.metadata["source"] = path.name
+                docs.append(doc)
         return docs
 
     if LEGACY_KB.is_file():
         for i, line in enumerate(LEGACY_KB.read_text(encoding="utf-8").splitlines()):
             line = line.strip()
             if line:
-                docs.append({"source": f"knowledge_base.txt#line{i + 1}", "text": line})
+                docs.append(
+                    Document(
+                        page_content=line,
+                        metadata={"source": f"knowledge_base.txt#line{i + 1}"},
+                    )
+                )
         return docs
 
     print(
@@ -73,46 +100,38 @@ def load_documents() -> list[dict[str, str]]:
     return []
 
 
-def build_chunk_records(docs: list[dict[str, str]]) -> list[dict[str, str | int]]:
-    records: list[dict[str, str | int]] = []
-    for doc in docs:
-        parts = chunk_text(doc["text"])
-        if not parts:
-            continue
-        for i, piece in enumerate(parts):
-            records.append(
-                {
-                    "text": piece,
-                    "source": doc["source"],
-                    "chunk_id": i,
-                }
-            )
-    return records
-
-
 def _r2_env_complete() -> bool:
-    return all(
-        os.getenv(k)
-        for k in (
-            "RAG_S3_ENDPOINT",
-            "RAG_S3_ACCESS_KEY_ID",
-            "RAG_S3_SECRET_ACCESS_KEY",
-            "RAG_S3_BUCKET",
-        )
-    )
+    return all(_env_non_empty(k) for k in ENV_KEYS)
+
+
+def _missing_r2_env() -> list[str]:
+    return [key for key in ENV_KEYS if not _env_non_empty(key)]
 
 
 def _object_key(filename: str) -> str:
-    prefix = os.getenv("RAG_S3_PREFIX", "rag").strip().strip("/")
+    prefix = (_env_non_empty("RAG_S3_PREFIX", "rag") or "rag").strip().strip("/")
     return f"{prefix}/{filename}" if prefix else filename
+
+
+def _ollama_base_url() -> str:
+    raw = _env_non_empty("RAG_OLLAMA_URL")
+    if not raw:
+        raw = _env_non_empty("OLLAMA_URL", "http://host.docker.internal:11434")
+    assert raw is not None
+    # OLLAMA_URL in this repo is often set to /api/generate for chat.
+    return raw.removesuffix("/api/generate").rstrip("/")
 
 
 def upload_artifacts(out_dir: Path) -> None:
     import boto3
     from botocore.config import Config
 
-    if not _r2_env_complete():
-        raise RuntimeError("RAG_S3_* environment variables are required for --upload")
+    missing = _missing_r2_env()
+    if missing:
+        raise RuntimeError(
+            "Missing required environment variables for --upload: "
+            + ", ".join(missing)
+        )
 
     endpoint = os.environ["RAG_S3_ENDPOINT"].rstrip("/")
     bucket = os.environ["RAG_S3_BUCKET"]
@@ -124,22 +143,24 @@ def upload_artifacts(out_dir: Path) -> None:
         region_name="auto",
         config=Config(signature_version="s3v4"),
     )
-    for name in ("manifest.json", "index.faiss", "chunks.pkl"):
+    for name in ("manifest.json", "index.faiss", "index.pkl"):
         path = out_dir / name
         if not path.is_file():
             raise FileNotFoundError(path)
         client.upload_file(str(path), bucket, _object_key(name))
-    prefix = os.getenv("RAG_S3_PREFIX", "rag").strip().strip("/")
+    prefix = (_env_non_empty("RAG_S3_PREFIX", "rag") or "rag").strip().strip("/")
     loc = f"{prefix}/" if prefix else ""
     print(f"Uploaded manifest + index + chunks to bucket={bucket!r} prefix={loc!r}")
 
 
 def main() -> int:
+    _load_dotenv_if_present()
+
     parser = argparse.ArgumentParser(description="Build FAISS RAG artifacts for workers.")
     parser.add_argument(
         "--model",
-        default=os.getenv("RAG_EMBED_MODEL", DEFAULT_MODEL),
-        help="Sentence-Transformers model id (must match worker at query time).",
+        default=_env_non_empty("RAG_EMBED_MODEL", DEFAULT_MODEL),
+        help="Ollama embedding model name (must match worker at query time).",
     )
     parser.add_argument(
         "--version",
@@ -157,45 +178,39 @@ def main() -> int:
     if not docs:
         return 1
 
-    records = build_chunk_records(docs)
-    if not records:
+    splitter = RecursiveCharacterTextSplitter(
+        chunk_size=int(_env_non_empty("RAG_CHUNK_SIZE", "700") or "700"),
+        chunk_overlap=int(_env_non_empty("RAG_CHUNK_OVERLAP", "120") or "120"),
+    )
+    chunks = splitter.split_documents(docs)
+    if not chunks:
         print("Chunking produced no segments.", file=sys.stderr)
         return 1
 
-    texts = [str(r["text"]) for r in records]
-    print(f"Embedding {len(texts)} chunks with {args.model} ...")
-    model = SentenceTransformer(args.model)
-    embeddings = model.encode(
-        texts,
-        convert_to_numpy=True,
-        normalize_embeddings=True,
-        show_progress_bar=True,
-    ).astype("float32")
-
-    d = embeddings.shape[1]
-    index = faiss.IndexFlatIP(d)
-    index.add(embeddings)
+    print(f"Embedding {len(chunks)} chunks with {args.model} ...")
+    embeddings = OllamaEmbeddings(
+        model=args.model,
+        base_url=_ollama_base_url(),
+    )
+    vector_store = FAISS.from_documents(chunks, embeddings)
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    index_path = OUTPUT_DIR / "index.faiss"
-    chunks_path = OUTPUT_DIR / "chunks.pkl"
     manifest_path = OUTPUT_DIR / "manifest.json"
 
-    faiss.write_index(index, str(index_path))
-    with open(chunks_path, "wb") as f:
-        pickle.dump(records, f)
+    vector_store.save_local(str(OUTPUT_DIR))
 
     manifest = {
         "version": str(args.version),
         "embedding_model": args.model,
-        "num_chunks": len(records),
+        "embedding_provider": "ollama",
+        "num_chunks": len(chunks),
         "index_file": "index.faiss",
-        "chunks_file": "chunks.pkl",
+        "store_file": "index.pkl",
     }
     manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
 
-    print(f"Wrote {index_path}")
-    print(f"Wrote {chunks_path}")
+    print(f"Wrote {OUTPUT_DIR / 'index.faiss'}")
+    print(f"Wrote {OUTPUT_DIR / 'index.pkl'}")
     print(f"Wrote {manifest_path}")
 
     if args.upload:

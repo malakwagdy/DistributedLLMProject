@@ -2,33 +2,45 @@ from __future__ import annotations
 
 import json
 import os
-import pickle
 import threading
 from pathlib import Path
 
-import faiss
-import numpy as np
-from sentence_transformers import SentenceTransformer
+from langchain_community.vectorstores import FAISS
+from langchain_ollama import OllamaEmbeddings
 
 from artifact_sync import sync_rag_artifacts
 
 _lock = threading.Lock()
-_index: faiss.Index | None = None
-_chunks: list[dict] | None = None
-_model: SentenceTransformer | None = None
+_vector_store: FAISS | None = None
+
+
+def _env_non_empty(key: str, default: str | None = None) -> str | None:
+    value = os.getenv(key)
+    if value is None:
+        return default
+    value = value.strip()
+    return value if value else default
 
 
 def _data_dir() -> Path:
-    override = os.getenv("RAG_DATA_DIR")
+    override = _env_non_empty("RAG_DATA_DIR")
     if override:
         return Path(override).expanduser().resolve()
     return Path(__file__).resolve().parent / "rag_data"
 
 
+def _ollama_base_url() -> str:
+    raw = _env_non_empty("RAG_OLLAMA_URL")
+    if not raw:
+        raw = _env_non_empty("OLLAMA_URL", "http://host.docker.internal:11434")
+    assert raw is not None
+    return raw.removesuffix("/api/generate").rstrip("/")
+
+
 def _ensure_loaded() -> None:
-    global _index, _chunks, _model
+    global _vector_store
     with _lock:
-        if _index is not None:
+        if _vector_store is not None:
             return
 
         data_dir = _data_dir()
@@ -43,45 +55,44 @@ def _ensure_loaded() -> None:
             )
 
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        model_name = os.getenv(
-            "RAG_EMBED_MODEL",
-            manifest.get("embedding_model", "sentence-transformers/all-MiniLM-L6-v2"),
-        )
+        fallback_model = str(manifest.get("embedding_model", "nomic-embed-text")).strip() or "nomic-embed-text"
+        model_name = _env_non_empty("RAG_EMBED_MODEL", fallback_model) or fallback_model
         expected = manifest.get("embedding_model")
+        provider = str(manifest.get("embedding_provider", "")).strip()
+        if provider and provider != "ollama":
+            raise RuntimeError(
+                "RAG artifact embedding provider mismatch. "
+                f"Manifest has embedding_provider={provider!r}, but runtime uses Ollama embeddings. "
+                "Rebuild and upload the index with the current pipeline."
+            )
         if expected and model_name != expected:
-            print(
-                f"Warning: RAG_EMBED_MODEL={model_name!r} differs from manifest {expected!r}; "
-                "retrieval quality may suffer.",
+            raise RuntimeError(
+                "RAG embedding model mismatch between worker and FAISS index. "
+                f"Runtime model={model_name!r}, manifest model={expected!r}. "
+                "Rebuild/upload index with the same model (or set matching RAG_EMBED_MODEL), "
+                "and bump RAG_INDEX_VERSION so workers re-sync artifacts."
             )
 
-        _index = faiss.read_index(str(data_dir / "index.faiss"))
-        with open(data_dir / "chunks.pkl", "rb") as f:
-            _chunks = pickle.load(f)
-        _model = SentenceTransformer(model_name)
+        embeddings = OllamaEmbeddings(
+            model=model_name,
+            base_url=_ollama_base_url(),
+        )
+        _vector_store = FAISS.load_local(
+            str(data_dir),
+            embeddings,
+            allow_dangerous_deserialization=True,
+        )
 
 
 def retrieve_context(query: str, top_k: int = 3) -> str:
     _ensure_loaded()
-    assert _index is not None and _chunks is not None and _model is not None
-
-    if not _chunks:
-        return "No knowledge base available."
-
-    q = _model.encode(
-        [query],
-        convert_to_numpy=True,
-        normalize_embeddings=True,
-    ).astype("float32")
-    scores, indices = _index.search(q, top_k)
+    assert _vector_store is not None
+    results = _vector_store.similarity_search_with_score(query, k=top_k)
 
     lines: list[str] = []
-    for rank, idx in enumerate(indices[0]):
-        if idx < 0 or idx >= len(_chunks):
-            continue
-        score = float(scores[0][rank])
-        row = _chunks[idx]
-        text = str(row.get("text", ""))
-        source = row.get("source", "")
+    for doc, score in results:
+        text = doc.page_content.strip()
+        source = str(doc.metadata.get("source", ""))
         if source:
             lines.append(f"[score={score:.3f} source={source}] {text}")
         else:

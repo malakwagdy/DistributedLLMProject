@@ -1,4 +1,4 @@
-"""Sync FAISS index + chunk metadata from S3-compatible storage (e.g. Cloudflare R2)."""
+"""Sync LangChain FAISS artifacts from S3-compatible storage (e.g. Cloudflare R2)."""
 
 from __future__ import annotations
 
@@ -26,7 +26,7 @@ def _object_key(filename: str) -> str:
 
 def sync_rag_artifacts(data_dir: Path) -> None:
     """
-    If RAG_S3_* env vars are set, download manifest.json, index.faiss, and chunks.pkl
+    If RAG_S3_* env vars are set, download manifest.json, index.faiss, and index.pkl
     when the remote version differs from the local cache (or files are missing).
     """
     if not _r2_env_complete():
@@ -58,11 +58,11 @@ def sync_rag_artifacts(data_dir: Path) -> None:
         version_file.exists()
         and version_file.read_text(encoding="utf-8").strip() == remote_version
         and (data_dir / "index.faiss").is_file()
-        and (data_dir / "chunks.pkl").is_file()
+        and (data_dir / "index.pkl").is_file()
     ):
         return
 
-    for name in ("index.faiss", "chunks.pkl", "manifest.json"):
+    for name in ("index.faiss", "index.pkl", "manifest.json"):
         client.download_file(bucket, _object_key(name), str(data_dir / name))
 
     version_file.write_text(remote_version, encoding="utf-8")
