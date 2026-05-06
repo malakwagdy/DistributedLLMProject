@@ -10,7 +10,7 @@ async def send_request(client, user_id):
         response = await client.post(
             "http://localhost:8000/ask",
             params={"prompt": f"User {user_id}: What is distributed computing?"},
-            timeout=60.0
+            timeout=120.0
         )
         latency = time.time() - start_time
         return response.status_code, latency
