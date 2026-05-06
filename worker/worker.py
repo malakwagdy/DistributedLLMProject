@@ -6,7 +6,7 @@ import os
 import threading
 
 from rag import retrieve_context
-from performance_monitor import log_performance
+from performance_monitor import log_performance, init_csv
 
 # r = redis.Redis(host="redis", port=6379, db=0, decode_responses=True)
 import urllib.parse
@@ -39,7 +39,7 @@ def heartbeat_loop():
     while True:
         r.setex(f"worker:{WORKER_ID}:heartbeat", HEARTBEAT_TTL_SECONDS, str(time.time()))
         r.set(f"worker:{WORKER_ID}:endpoint", os.getenv("OLLAMA_URL", "http://host.docker.internal:11434"))
-        log_performance(WORKER_ID)  # Log CPU and memory
+        log_performance(WORKER_ID, "heartbeat")  # Log to CSV every 2 seconds
         time.sleep(HEARTBEAT_INTERVAL_SECONDS)
 
 
@@ -47,6 +47,9 @@ def process_one_task(task_payload):
     task = json.loads(task_payload)
     job_id = task["job_id"]
     print(f"Worker {WORKER_ID} processing task {job_id}")
+    
+    # Log CPU/GPU for this task
+    log_performance(WORKER_ID, job_id)
 
     context = retrieve_context(task["prompt"], top_k=3)
     full_prompt = (
@@ -64,6 +67,7 @@ def process_one_task(task_payload):
 
 
 print(f"Worker {WORKER_ID} started...")
+init_csv()  # Initialize CSV file
 threading.Thread(target=heartbeat_loop, daemon=True).start()
 r.set(f"worker:{WORKER_ID}:load", 0)
 
