@@ -6,7 +6,7 @@ import os
 import threading
 
 from rag import retrieve_context
-from performance_monitor import log_performance, init_csv
+from performance_monitor import log_performance
 
 # r = redis.Redis(host="redis", port=6379, db=0, decode_responses=True)
 import urllib.parse
@@ -67,7 +67,6 @@ def process_one_task(task_payload):
 
 
 print(f"Worker {WORKER_ID} started...")
-init_csv()  # Initialize CSV file
 threading.Thread(target=heartbeat_loop, daemon=True).start()
 r.set(f"worker:{WORKER_ID}:load", 0)
 

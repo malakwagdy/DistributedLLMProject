@@ -1,7 +1,6 @@
 """Performance Monitor - CPU and GPU with CSV logging"""
 import psutil
 import csv
-import os
 from datetime import datetime
 
 try:
@@ -12,16 +11,6 @@ except:
 
 CSV_FILE = "/app/performance_metrics.csv"
 
-def init_csv():
-    """Create CSV file with headers if it doesn't exist"""
-    if not os.path.exists(CSV_FILE):
-        try:
-            with open(CSV_FILE, 'w', newline='') as f:
-                writer = csv.writer(f)
-                writer.writerow(['timestamp', 'worker_id', 'task_id', 'cpu_percent', 'gpu_percent'])
-        except:
-            pass
-
 def log_performance(worker_id, task_id="idle"):
     """Log CPU and GPU to CSV file"""
     cpu = psutil.cpu_percent(interval=0.1)
@@ -29,24 +18,13 @@ def log_performance(worker_id, task_id="idle"):
     
     if GPU_AVAILABLE:
         try:
-            gpus = GPUtil.getGPUs()
-            if gpus:
-                gpu = gpus[0].load * 100
+            gpu = GPUtil.getGPUs()[0].load * 100
         except:
             pass
     
-    # Save to CSV
+    # Append to CSV (creates file if needed)
     try:
-        with open(CSV_FILE, 'a', newline='') as f:
-            writer = csv.writer(f)
-            writer.writerow([
-                datetime.now().isoformat(),
-                worker_id,
-                task_id,
-                f"{cpu:.1f}",
-                f"{gpu:.1f}"
-            ])
+        with open(CSV_FILE, 'a') as f:
+            f.write(f"{datetime.now().isoformat()},{worker_id},{task_id},{cpu:.1f},{gpu:.1f}\n")
     except:
         pass
-    
-    return {"cpu": cpu, "gpu": gpu}
