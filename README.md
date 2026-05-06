@@ -4,8 +4,8 @@ This is the currently used setup for the project:
 
 - `gateway` receives `/ask` requests.
 - `master` schedules tasks to worker-specific queues.
-- `worker` runs against local Ollama (`smollm2`).
-- `worker_remote` runs against Kaggle Ollama over ngrok (`smollm2`).
+- `worker` runs against local Ollama (`smollm:135m`).
+- `worker_remote` runs against Kaggle Ollama over ngrok (`smollm:135m`).
 - Redis stores queues, heartbeats, processing state, and results.
 
 ## Architecture Flow
@@ -68,6 +68,6 @@ python3 test_client.py
 ```bash
 curl -i "$REMOTE_OLLAMA_URL/api/generate" \
   -H "Content-Type: application/json" \
-  -d '{"model":"phi3:mini","prompt":"ping","stream":false}' \
+  -d '{"model":"smollm:135m","prompt":"ping","stream":false}' \
   --max-time 30
 ```

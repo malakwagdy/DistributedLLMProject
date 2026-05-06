@@ -1,9 +1,4 @@
 services:
-  # redis:
-  #   image: redis:alpine
-  #   ports:
-  #     - "0.0.0.0:6379:6379"
-
   master:
     build: ./master
     ports:
@@ -33,7 +28,7 @@ services:
   #   build: ./worker
   #   environment:
   #     - OLLAMA_URL=http://host.docker.internal:11434
-  #     - OLLAMA_MODEL=smollm2
+  #     - OLLAMA_MODEL=smollm:135m
   #     - HEARTBEAT_INTERVAL_SECONDS=2
   #     - HEARTBEAT_TTL_SECONDS=8
   #     - RESULT_TTL_SECONDS=300
