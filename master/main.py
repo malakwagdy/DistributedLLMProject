@@ -2,6 +2,8 @@ from collections import defaultdict
 import asyncio
 import json
 import os
+import time
+from datetime import datetime
 from typing import Any
 
 from fastapi import FastAPI
@@ -16,6 +18,10 @@ MAX_ATTEMPTS = int(os.getenv("MAX_ATTEMPTS", "3"))
 SCHEDULER_STRATEGY = os.getenv("SCHEDULER_STRATEGY", "least_connections")
 
 _rr_index = 0
+
+
+def log(message: str) -> None:
+    print(f"{datetime.now().isoformat(timespec='seconds')} {message}")
 
 
 async def list_active_workers() -> list[str]:
@@ -70,6 +76,11 @@ async def scheduler_loop() -> None:
                 continue
             _, payload = popped
             task: dict[str, Any] = json.loads(payload)
+            if await r.exists(f"cancel:{task['job_id']}"):
+                log(
+                    f"[scheduler] dropped canceled job_id={task['job_id']}"
+                )
+                continue
 
             workers = await list_active_workers()
             if not workers:
@@ -85,15 +96,45 @@ async def scheduler_loop() -> None:
             task["strategy"] = strategy
 
             await r.lpush(f"worker_queue:{worker}", json.dumps(task))
-            print(f"[scheduler] scheduled job_id={task['job_id']} worker={worker} strategy={strategy}")
+            log(f"[scheduler] scheduled job_id={task['job_id']} worker={worker} strategy={strategy}")
         except Exception as exc:  # noqa: BLE001
-            print(f"[scheduler] error: {exc}")
+            log(f"[scheduler] error: {exc}")
             await asyncio.sleep(1)
 
 
 async def recover_stale_processing_loop() -> None:
     while True:
         try:
+            workers = await list_active_workers()
+            logged_unreachable_workers: set[str] = set()
+
+            # Reclaim jobs that were assigned but never started on workers that are now dead.
+            worker_queue_keys = await r.keys("worker_queue:*")
+            for queue_key in worker_queue_keys:
+                worker_id = queue_key.split(":")[1]
+                if worker_id in workers:
+                    continue
+                if worker_id not in logged_unreachable_workers:
+                    log(
+                        f"[recovery] worker_unreachable worker={worker_id} "
+                        f"action=drain_assigned_queue"
+                    )
+                    logged_unreachable_workers.add(worker_id)
+                while True:
+                    payload = await r.rpop(queue_key)
+                    if not payload:
+                        break
+                    task = json.loads(payload)
+                    if await r.exists(f"cancel:{task['job_id']}"):
+                        log(
+                            f"[recovery] drop canceled queued job_id={task['job_id']} from worker={worker_id}"
+                        )
+                        continue
+                    await r.lpush("incoming_tasks", json.dumps(task))
+                    log(
+                        f"[recovery] requeued queued job_id={task['job_id']} from dead_worker={worker_id}"
+                    )
+
             processing_keys = await r.keys("processing:*")
             grouped: dict[str, list[str]] = defaultdict(list)
             for meta_key in processing_keys:
@@ -108,23 +149,41 @@ async def recover_stale_processing_loop() -> None:
                         continue
                     meta = json.loads(meta_raw)
                     started_at = float(meta.get("started_at", 0))
-                    now = asyncio.get_running_loop().time()
+                    now = time.time()
                     stale = (now - started_at) > PROCESSING_STALE_SECONDS
 
                     if alive and not stale:
                         continue
 
+                    if not alive:
+                        if worker_id not in logged_unreachable_workers:
+                            log(
+                                f"[recovery] worker_unreachable worker={worker_id} "
+                                f"action=reclaim_processing"
+                            )
+                            logged_unreachable_workers.add(worker_id)
+                        log(
+                            f"[recovery] reclaiming_from_unreachable worker={worker_id} "
+                            f"job_id={job_id}"
+                        )
                     payload = meta["task_payload"]
                     task = json.loads(payload)
                     task["attempts"] = int(task.get("attempts", 0)) + 1
 
-                    await r.lrem(f"processing_queue:{worker_id}", 1, payload)
+                    removed = await r.lrem(f"processing_queue:{worker_id}", 1, payload)
+                    if removed > 0:
+                        await safe_decr_load(worker_id)
                     await r.delete(f"processing:{worker_id}:{job_id}")
-                    await r.decr(f"worker:{worker_id}:load")
 
+                    if await r.exists(f"cancel:{task['job_id']}"):
+                        log(
+                            f"[recovery] skip canceled job_id={task['job_id']} from worker={worker_id}"
+                        )
+                        continue
                     if task["attempts"] <= MAX_ATTEMPTS:
                         await r.lpush("incoming_tasks", json.dumps(task))
-                        print(f"[recovery] requeued job_id={task['job_id']} from_worker={worker_id}")
+
+                        log(f"[recovery] requeued job_id={task['job_id']} from_worker={worker_id}")
                     else:
                         await r.setex(
                             f"result:{task['job_id']}",
@@ -136,9 +195,18 @@ async def recover_stale_processing_loop() -> None:
                             }),
                         )
         except Exception as exc:  # noqa: BLE001
-            print(f"[recovery] error: {exc}")
+            log(f"[recovery] error: {exc}")
         await asyncio.sleep(2)
 
+
+async def safe_decr_load(worker_id: str) -> None:
+    key = f"worker:{worker_id}:load"
+    raw = await r.get(key)
+    current = int(raw) if raw else 0
+    if current <= 0:
+        await r.set(key, 0)
+        return
+    await r.decr(key)
 
 @app.on_event("startup")
 async def startup() -> None:

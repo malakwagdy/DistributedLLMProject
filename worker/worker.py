@@ -4,12 +4,14 @@ import requests
 import time
 import os
 import threading
-
+import traceback
+import urllib.parse
+from datetime import datetime
 from rag import retrieve_context
 from performance_monitor import log_performance, log_activity
 
-# r = redis.Redis(host="redis", port=6379, db=0, decode_responses=True)
-import urllib.parse
+def log(message: str) -> None:
+    print(f"{datetime.now().isoformat(timespec='seconds')} [worker] {message}")
 
 _redis_url = os.getenv("REDIS_URL", "redis://redis:6379")
 _parsed = urllib.parse.urlparse(_redis_url)
@@ -19,7 +21,8 @@ r = redis.Redis(
     db=0,
     decode_responses=True
 )
-print(f"REDIS_URL = {os.getenv('REDIS_URL', 'NOT SET')}")
+log(f"REDIS_URL = {os.getenv('REDIS_URL', 'NOT SET')}")
+
 
 # Get worker ID - use sequential number if available, otherwise hostname
 HOSTNAME = os.getenv("HOSTNAME", "worker-unknown")
@@ -51,7 +54,7 @@ def heartbeat_loop():
 def process_one_task(task_payload):
     task = json.loads(task_payload)
     job_id = task["job_id"]
-    print(f"Worker {WORKER_ID} processing task {job_id}")
+    log(f"Worker {WORKER_ID} processing task {job_id}")
     log_activity(f"Worker {WORKER_ID} processing task {job_id}")
     
     # Track start time
@@ -81,10 +84,11 @@ def process_one_task(task_payload):
     )
 
 
-print(f"Worker {WORKER_ID} started...")
+log(f"Worker {WORKER_ID} started...")
 log_activity(f"Worker {WORKER_ID} started")
 threading.Thread(target=heartbeat_loop, daemon=True).start()
-r.set(f"worker:{WORKER_ID}:load", 0)
+# Reconstruct load from in-flight queue to avoid reset drift after restarts
+r.set(f"worker:{WORKER_ID}:load", r.llen(f"processing_queue:{WORKER_ID}"))
 
 while True:
     source_queue = f"worker_queue:{WORKER_ID}"
@@ -96,16 +100,28 @@ while True:
 
     task = json.loads(task_payload)
     job_id = task["job_id"]
+    if r.exists(f"cancel:{job_id}"):
+        log(
+            f"[worker] dropped canceled job_id={job_id} worker={WORKER_ID}"
+        )
+        # Drop canceled task quickly.
+        r.lrem(processing_queue, 1, task_payload)
+        r.delete(f"processing:{WORKER_ID}:{job_id}")
+        continue
     r.incr(f"worker:{WORKER_ID}:load")
     r.set(
         f"processing:{WORKER_ID}:{job_id}",
-        json.dumps({"task_payload": task_payload, "started_at": time.monotonic()}),
+        json.dumps({"task_payload": task_payload, "started_at": time.time()}),
     )
 
     try:
         process_one_task(task_payload)
     except Exception as exc:  # noqa: BLE001
-        print(f"Worker {WORKER_ID} failed job_id={job_id} error={exc}")
+        log(
+            f"Worker {WORKER_ID} failed job_id={job_id} "
+            f"error_type={type(exc).__name__} error_repr={exc!r}"
+        )
+        log(traceback.format_exc())
         log_activity(f"Worker {WORKER_ID} FAILED task {job_id}: {exc}")
         r.setex(
             f"result:{job_id}",
@@ -113,6 +129,13 @@ while True:
             json.dumps({"worker": WORKER_ID, "job_id": job_id, "error": str(exc)}),
         )
     finally:
-        r.lrem(processing_queue, 1, task_payload)
+        removed = r.lrem(processing_queue, 1, task_payload)
         r.delete(f"processing:{WORKER_ID}:{job_id}")
-        r.decr(f"worker:{WORKER_ID}:load")
+        if removed > 0:
+            # Only decrement if this worker still owns the processing entry.
+            current = r.get(f"worker:{WORKER_ID}:load")
+            load = int(current) if current else 0
+            if load > 0:
+                r.decr(f"worker:{WORKER_ID}:load")
+            else:
+                r.set(f"worker:{WORKER_ID}:load", 0)

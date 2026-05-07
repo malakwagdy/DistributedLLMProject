@@ -12,7 +12,7 @@ ENV PYTHONUNBUFFERED=1
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy the worker script
+# Copy app (include worker/rag_data/ if present after `python build_index.py`, or set RAG_S3_* at runtime).
 COPY . .
 
 # Start the worker script

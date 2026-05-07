@@ -11,3 +11,5 @@ logs/
 *.docx
 *.pdf
 *.csv
+worker/rag_data/
+worker/rag_data/**

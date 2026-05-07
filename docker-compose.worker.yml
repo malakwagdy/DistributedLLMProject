@@ -10,11 +10,18 @@ services:
     #           capabilities: [gpu]
     environment:
       - REDIS_URL=redis://100.68.227.68:6379
-      - OLLAMA_URL=${REMOTE_OLLAMA_URL}
+      - OLLAMA_URL=http://host.docker.internal:11434
       - OLLAMA_MODEL=smollm:135m
       - HEARTBEAT_INTERVAL_SECONDS=2
       - HEARTBEAT_TTL_SECONDS=8
       - RESULT_TTL_SECONDS=300
+      # R2 + optional RAG overrides: set in project-root .env
+      - RAG_S3_ENDPOINT=${RAG_S3_ENDPOINT}
+      - RAG_S3_ACCESS_KEY_ID=${RAG_S3_ACCESS_KEY_ID}
+      - RAG_S3_SECRET_ACCESS_KEY=${RAG_S3_SECRET_ACCESS_KEY}
+      - RAG_S3_BUCKET=${RAG_S3_BUCKET}
+      - RAG_S3_PREFIX=${RAG_S3_PREFIX:-rag}
+      - RAG_EMBED_MODEL=${RAG_EMBED_MODEL:-}
       - HOST_PROC=/host/proc
       - HOST_SYS=/host/sys
     extra_hosts:

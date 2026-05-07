@@ -4,10 +4,15 @@ import uuid
 import json
 import asyncio
 import os
+from datetime import datetime
 
 app = FastAPI()
 r = redis.from_url(os.getenv("REDIS_URL", "redis://redis:6379/0"), decode_responses=True)
 REQUEST_TIMEOUT_SECONDS = int(os.getenv("REQUEST_TIMEOUT_SECONDS", "120"))
+
+
+def log(message: str) -> None:
+    print(f"{datetime.now().isoformat(timespec='seconds')} {message}")
 
 
 @app.post("/ask")
@@ -32,6 +37,11 @@ async def handle_request(prompt: str):
             return json.loads(result)
         await asyncio.sleep(0.5)
 
+    log(
+        f"[gateway] timeout job_id={job_id} "
+        f"waited_seconds={REQUEST_TIMEOUT_SECONDS} action=cancel_marked"
+    )
+    await r.setex(f"cancel:{job_id}", 300, "1")
     raise HTTPException(status_code=504, detail="Timed out waiting for response")
 
 
