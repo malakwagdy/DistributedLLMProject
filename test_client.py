@@ -10,7 +10,7 @@ async def send_request(client, user_id):
         response = await client.post(
             "http://localhost:8000/ask",
             params={"prompt": f"User {user_id}: What is distributed computing?"},
-            timeout=60.0
+            timeout=120.0
         )
         latency = time.time() - start_time
         return response.status_code, latency
@@ -44,4 +44,4 @@ async def run_load_test(total_requests):
 
 if __name__ == "__main__":
     # for users in [100, 250, 500, 750, 1000]:
-    asyncio.run(run_load_test(1000))
+    asyncio.run(run_load_test(200))

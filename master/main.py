@@ -2,13 +2,14 @@ from collections import defaultdict
 import asyncio
 import json
 import os
+import time
 from typing import Any
 
 from fastapi import FastAPI
 import redis.asyncio as redis
 
 app = FastAPI()
-r = redis.from_url("redis://redis:6379/0", decode_responses=True)
+r = redis.from_url(os.getenv("REDIS_URL", "redis://redis:6379/0"), decode_responses=True)
 
 HEARTBEAT_TIMEOUT_SECONDS = int(os.getenv("HEARTBEAT_TIMEOUT_SECONDS", "8"))
 PROCESSING_STALE_SECONDS = int(os.getenv("PROCESSING_STALE_SECONDS", "45"))
@@ -70,6 +71,11 @@ async def scheduler_loop() -> None:
                 continue
             _, payload = popped
             task: dict[str, Any] = json.loads(payload)
+            if await r.exists(f"cancel:{task['job_id']}"):
+                print(
+                    f"[scheduler] dropped canceled job_id={task['job_id']}"
+                )
+                continue
 
             workers = await list_active_workers()
             if not workers:
@@ -108,22 +114,34 @@ async def recover_stale_processing_loop() -> None:
                         continue
                     meta = json.loads(meta_raw)
                     started_at = float(meta.get("started_at", 0))
-                    now = asyncio.get_running_loop().time()
+                    now = time.time()
                     stale = (now - started_at) > PROCESSING_STALE_SECONDS
 
                     if alive and not stale:
                         continue
 
+                    if not alive:
+                        print(
+                            f"[recovery] worker_unreachable worker={worker_id} "
+                            f"job_id={job_id} action=reclaim"
+                        )
                     payload = meta["task_payload"]
                     task = json.loads(payload)
                     task["attempts"] = int(task.get("attempts", 0)) + 1
 
-                    await r.lrem(f"processing_queue:{worker_id}", 1, payload)
+                    removed = await r.lrem(f"processing_queue:{worker_id}", 1, payload)
+                    if removed > 0:
+                        await safe_decr_load(worker_id)
                     await r.delete(f"processing:{worker_id}:{job_id}")
-                    await r.decr(f"worker:{worker_id}:load")
 
+                    if await r.exists(f"cancel:{task['job_id']}"):
+                        print(
+                            f"[recovery] skip canceled job_id={task['job_id']} from worker={worker_id}"
+                        )
+                        continue
                     if task["attempts"] <= MAX_ATTEMPTS:
                         await r.lpush("incoming_tasks", json.dumps(task))
+
                         print(f"[recovery] requeued job_id={task['job_id']} from_worker={worker_id}")
                     else:
                         await r.setex(
@@ -139,6 +157,15 @@ async def recover_stale_processing_loop() -> None:
             print(f"[recovery] error: {exc}")
         await asyncio.sleep(2)
 
+
+async def safe_decr_load(worker_id: str) -> None:
+    key = f"worker:{worker_id}:load"
+    raw = await r.get(key)
+    current = int(raw) if raw else 0
+    if current <= 0:
+        await r.set(key, 0)
+        return
+    await r.decr(key)
 
 @app.on_event("startup")
 async def startup() -> None:

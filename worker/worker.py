@@ -5,11 +5,9 @@ import time
 import os
 import threading
 import traceback
+import urllib.parse
 
 from rag import retrieve_context
-
-# r = redis.Redis(host="redis", port=6379, db=0, decode_responses=True)
-import urllib.parse
 
 _redis_url = os.getenv("REDIS_URL", "redis://redis:6379")
 _parsed = urllib.parse.urlparse(_redis_url)
@@ -20,6 +18,7 @@ r = redis.Redis(
     decode_responses=True
 )
 print(f"REDIS_URL = {os.getenv('REDIS_URL', 'NOT SET')}")
+
 WORKER_ID = os.getenv("HOSTNAME", "worker-unknown")
 HEARTBEAT_INTERVAL_SECONDS = int(os.getenv("HEARTBEAT_INTERVAL_SECONDS", "2"))
 HEARTBEAT_TTL_SECONDS = int(os.getenv("HEARTBEAT_TTL_SECONDS", "8"))
@@ -64,7 +63,8 @@ def process_one_task(task_payload):
 
 print(f"Worker {WORKER_ID} started...")
 threading.Thread(target=heartbeat_loop, daemon=True).start()
-r.set(f"worker:{WORKER_ID}:load", 0)
+# Reconstruct load from in-flight queue to avoid reset drift after restarts
+r.set(f"worker:{WORKER_ID}:load", r.llen(f"processing_queue:{WORKER_ID}"))
 
 while True:
     source_queue = f"worker_queue:{WORKER_ID}"
@@ -76,10 +76,18 @@ while True:
 
     task = json.loads(task_payload)
     job_id = task["job_id"]
+    if r.exists(f"cancel:{job_id}"):
+        print(
+            f"[worker] dropped canceled job_id={job_id} worker={WORKER_ID}"
+        )
+        # Drop canceled task quickly.
+        r.lrem(processing_queue, 1, task_payload)
+        r.delete(f"processing:{WORKER_ID}:{job_id}")
+        continue
     r.incr(f"worker:{WORKER_ID}:load")
     r.set(
         f"processing:{WORKER_ID}:{job_id}",
-        json.dumps({"task_payload": task_payload, "started_at": time.monotonic()}),
+        json.dumps({"task_payload": task_payload, "started_at": time.time()}),
     )
 
     try:
@@ -96,6 +104,13 @@ while True:
             json.dumps({"worker": WORKER_ID, "job_id": job_id, "error": str(exc)}),
         )
     finally:
-        r.lrem(processing_queue, 1, task_payload)
+        removed = r.lrem(processing_queue, 1, task_payload)
         r.delete(f"processing:{WORKER_ID}:{job_id}")
-        r.decr(f"worker:{WORKER_ID}:load")
+        if removed > 0:
+            # Only decrement if this worker still owns the processing entry.
+            current = r.get(f"worker:{WORKER_ID}:load")
+            load = int(current) if current else 0
+            if load > 0:
+                r.decr(f"worker:{WORKER_ID}:load")
+            else:
+                r.set(f"worker:{WORKER_ID}:load", 0)

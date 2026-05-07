@@ -4,8 +4,8 @@ This is the currently used setup for the project:
 
 - `gateway` receives `/ask` requests.
 - `master` schedules tasks to worker-specific queues.
-- `worker` runs against local Ollama (`phi3`).
-- `worker_remote` runs against Kaggle Ollama over ngrok (`phi3:mini`).
+- `worker` runs against local Ollama (`smollm:135m`).
+- `worker_remote` runs against Kaggle Ollama over ngrok (`smollm:135m`).
 - Redis stores queues, heartbeats, processing state, and results.
 
 ## Architecture Flow
@@ -21,7 +21,7 @@ This is the currently used setup for the project:
 ## Prerequisites
 
 - Docker + Docker Compose on local machine.
-- Local Ollama running with `phi3` model.
+- Local Ollama running with `smollm2` model.
 - Kaggle notebook running `scripts/kaggle_ollama_ngrok_setup.py`.
 - Local `.env` containing:
   - `REMOTE_OLLAMA_URL=https://<your-ngrok-url>`
@@ -68,6 +68,6 @@ python3 test_client.py
 ```bash
 curl -i "$REMOTE_OLLAMA_URL/api/generate" \
   -H "Content-Type: application/json" \
-  -d '{"model":"phi3:mini","prompt":"ping","stream":false}' \
+  -d '{"model":"smollm:135m","prompt":"ping","stream":false}' \
   --max-time 30
 ```
