@@ -54,7 +54,10 @@ def process_one_task(task_payload):
     print(f"Worker {WORKER_ID} processing task {job_id}")
     log_activity(f"Worker {WORKER_ID} processing task {job_id}")
     
-    # Log CPU/GPU for this task
+    # Track start time
+    start_time = time.time()
+    
+    # Log CPU/GPU for this task (no latency yet)
     log_performance(WORKER_ID, job_id)
 
     context = retrieve_context(task["prompt"], top_k=3)
@@ -66,7 +69,13 @@ def process_one_task(task_payload):
 
     answer = process_with_llm(full_prompt)
     
-    log_activity(f"Worker {WORKER_ID} completed task {job_id}")
+    # Calculate latency
+    latency = time.time() - start_time
+    
+    log_activity(f"Worker {WORKER_ID} completed task {job_id} in {latency:.2f}s")
+    
+    # Log completion with latency
+    log_performance(WORKER_ID, job_id, latency_seconds=latency)
     
     r.setex(
         f"result:{job_id}",

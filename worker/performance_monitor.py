@@ -48,8 +48,8 @@ def read_gpu():
         pass
     return 0
 
-def log_performance(worker_id, task_id="idle"):
-    """Log CPU and GPU to worker-specific CSV file"""
+def log_performance(worker_id, task_id="idle", latency_seconds=None):
+    """Log CPU, GPU, and latency to worker-specific CSV file"""
     cpu = read_host_cpu()
     gpu = read_gpu()
     
@@ -61,8 +61,9 @@ def log_performance(worker_id, task_id="idle"):
     try:
         with open(csv_file, 'a') as f:
             if not file_exists:
-                f.write("timestamp,worker_id,task_id,cpu_percent,gpu_percent\n")
-            f.write(f"{datetime.now().isoformat()},{worker_id},{task_id},{cpu:.1f},{gpu:.1f}\n")
+                f.write("timestamp,worker_id,task_id,cpu_percent,gpu_percent,latency_seconds\n")
+            latency_str = f"{latency_seconds:.2f}" if latency_seconds is not None else ""
+            f.write(f"{datetime.now().isoformat()},{worker_id},{task_id},{cpu:.1f},{gpu:.1f},{latency_str}\n")
     except:
         pass
 
