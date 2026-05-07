@@ -6,8 +6,14 @@ import os
 import threading
 import traceback
 import urllib.parse
+from datetime import datetime
 
 from rag import retrieve_context
+
+
+def log(message: str) -> None:
+    print(f"{datetime.now().isoformat(timespec='seconds')} {message}")
+
 
 _redis_url = os.getenv("REDIS_URL", "redis://redis:6379")
 _parsed = urllib.parse.urlparse(_redis_url)
@@ -17,7 +23,7 @@ r = redis.Redis(
     db=0,
     decode_responses=True
 )
-print(f"REDIS_URL = {os.getenv('REDIS_URL', 'NOT SET')}")
+log(f"REDIS_URL = {os.getenv('REDIS_URL', 'NOT SET')}")
 
 WORKER_ID = os.getenv("HOSTNAME", "worker-unknown")
 HEARTBEAT_INTERVAL_SECONDS = int(os.getenv("HEARTBEAT_INTERVAL_SECONDS", "2"))
@@ -44,7 +50,7 @@ def heartbeat_loop():
 def process_one_task(task_payload):
     task = json.loads(task_payload)
     job_id = task["job_id"]
-    print(f"Worker {WORKER_ID} processing task {job_id}")
+    log(f"Worker {WORKER_ID} processing task {job_id}")
 
     context = retrieve_context(task["prompt"], top_k=3)
     full_prompt = (
@@ -61,7 +67,7 @@ def process_one_task(task_payload):
     )
 
 
-print(f"Worker {WORKER_ID} started...")
+log(f"Worker {WORKER_ID} started...")
 threading.Thread(target=heartbeat_loop, daemon=True).start()
 # Reconstruct load from in-flight queue to avoid reset drift after restarts
 r.set(f"worker:{WORKER_ID}:load", r.llen(f"processing_queue:{WORKER_ID}"))
@@ -77,7 +83,7 @@ while True:
     task = json.loads(task_payload)
     job_id = task["job_id"]
     if r.exists(f"cancel:{job_id}"):
-        print(
+        log(
             f"[worker] dropped canceled job_id={job_id} worker={WORKER_ID}"
         )
         # Drop canceled task quickly.
@@ -93,11 +99,11 @@ while True:
     try:
         process_one_task(task_payload)
     except Exception as exc:  # noqa: BLE001
-        print(
+        log(
             f"Worker {WORKER_ID} failed job_id={job_id} "
             f"error_type={type(exc).__name__} error_repr={exc!r}"
         )
-        print(traceback.format_exc())
+        log(traceback.format_exc())
         r.setex(
             f"result:{job_id}",
             RESULT_TTL_SECONDS,
