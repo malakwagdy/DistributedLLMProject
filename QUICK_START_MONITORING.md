@@ -8,14 +8,11 @@ docker compose -f docker-compose.worker.yml up --build --scale worker=10
 ```
 
 ### 2. Let It Run
-Metrics are saved to CSV automatically. No console spam!
+Metrics are saved to `logs/` folder automatically. No console spam!
 
 ### 3. Analyze
 ```bash
-# Copy CSV from container
-docker cp distributedllmproject-worker-1:/app/performance_metrics.csv .
-
-# Show per-node and overall averages
+# Logs are automatically mounted to host logs/ folder
 python analyze_performance.py
 ```
 
@@ -24,16 +21,29 @@ python analyze_performance.py
 ============================================================
 PER-NODE PERFORMANCE
 ============================================================
-worker-1
-  Tasks: 327 | Avg CPU: 45.2% | Avg GPU: 78.5%
-worker-2
-  Tasks: 315 | Avg CPU: 32.1% | No GPU
+40cdb3e0f389: 83 tasks | CPU: 0.5% | GPU: 53.8%
+5cbf60ed7a44: 83 tasks | CPU: 0.5% | GPU: 53.7%
+77d23d5309fe: 83 tasks | CPU: 0.5% | GPU: 54.1%
 
 ============================================================
 OVERALL AVERAGE
 ============================================================
-CPU: 38.7% | GPU: 26.2%
+CPU: 0.5% | GPU: 53.9%
 ============================================================
 ```
+
+## Log Files Structure
+```
+logs/
+├── worker-1_metrics.csv    # CPU/GPU metrics with timestamps
+├── worker-2_metrics.csv
+├── worker-3_metrics.csv
+└── activity.log            # Worker activities (start, processing, completed)
+```
+
+## Notes
+- CPU usage is low (0.5-2%) because GPU does the LLM inference work
+- GPU usage shows actual workload (50-80% during tasks)
+- MacBook users: Apple Silicon GPU cannot be detected by nvidia-smi
 
 Done!

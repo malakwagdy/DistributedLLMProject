@@ -1,6 +1,13 @@
 services:
   worker:
     build: ./worker
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
     environment:
       - REDIS_URL=redis://host.docker.internal:6379
       - OLLAMA_URL=http://host.docker.internal:11434
@@ -12,7 +19,8 @@ services:
       - HOST_SYS=/host/sys
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    # Mount host system stats
+    # Mount host system stats and logs folder
     volumes:
       - /proc:/host/proc:ro
       - /sys:/host/sys:ro
+      - ./logs:/app/logs

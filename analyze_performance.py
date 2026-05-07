@@ -1,19 +1,37 @@
-"""Analyze performance metrics from CSV"""
-import csv
+"""Analyze performance metrics from CSV files in logs/ folder"""
+import os
 from collections import defaultdict
 
 def analyze():
     worker_data = defaultdict(lambda: {"cpu": [], "gpu": [], "tasks": set()})
     
-    with open("performance_metrics.csv") as f:
-        for line in f:
-            parts = line.strip().split(',')
-            if len(parts) == 5:
-                timestamp, worker, task, cpu, gpu = parts
-                worker_data[worker]['cpu'].append(float(cpu))
-                worker_data[worker]['gpu'].append(float(gpu))
-                if task not in ["heartbeat", "idle"]:
-                    worker_data[worker]['tasks'].add(task)
+    # Read all worker CSV files from logs/ folder
+    logs_dir = "logs"
+    if not os.path.exists(logs_dir):
+        print(f"Error: {logs_dir}/ folder not found")
+        return
+    
+    csv_files = [f for f in os.listdir(logs_dir) if f.endswith("_metrics.csv")]
+    
+    if not csv_files:
+        print(f"No CSV files found in {logs_dir}/")
+        return
+    
+    for csv_file in csv_files:
+        filepath = os.path.join(logs_dir, csv_file)
+        with open(filepath) as f:
+            next(f)  # Skip header
+            for line in f:
+                parts = line.strip().split(',')
+                if len(parts) == 5:
+                    timestamp, worker, task, cpu, gpu = parts
+                    try:
+                        worker_data[worker]['cpu'].append(float(cpu))
+                        worker_data[worker]['gpu'].append(float(gpu))
+                        if task not in ["heartbeat", "idle"]:
+                            worker_data[worker]['tasks'].add(task)
+                    except ValueError:
+                        continue
     
     print("\n" + "="*60)
     print("PER-NODE PERFORMANCE")

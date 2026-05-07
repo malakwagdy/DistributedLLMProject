@@ -6,7 +6,7 @@ import os
 import threading
 
 from rag import retrieve_context
-from performance_monitor import log_performance
+from performance_monitor import log_performance, log_activity
 
 # r = redis.Redis(host="redis", port=6379, db=0, decode_responses=True)
 import urllib.parse
@@ -47,6 +47,7 @@ def process_one_task(task_payload):
     task = json.loads(task_payload)
     job_id = task["job_id"]
     print(f"Worker {WORKER_ID} processing task {job_id}")
+    log_activity(f"Worker {WORKER_ID} processing task {job_id}")
     
     # Log CPU/GPU for this task
     log_performance(WORKER_ID, job_id)
@@ -59,6 +60,9 @@ def process_one_task(task_payload):
     )
 
     answer = process_with_llm(full_prompt)
+    
+    log_activity(f"Worker {WORKER_ID} completed task {job_id}")
+    
     r.setex(
         f"result:{job_id}",
         RESULT_TTL_SECONDS,
@@ -67,6 +71,7 @@ def process_one_task(task_payload):
 
 
 print(f"Worker {WORKER_ID} started...")
+log_activity(f"Worker {WORKER_ID} started")
 threading.Thread(target=heartbeat_loop, daemon=True).start()
 r.set(f"worker:{WORKER_ID}:load", 0)
 
@@ -90,6 +95,7 @@ while True:
         process_one_task(task_payload)
     except Exception as exc:  # noqa: BLE001
         print(f"Worker {WORKER_ID} failed job_id={job_id} error={exc}")
+        log_activity(f"Worker {WORKER_ID} FAILED task {job_id}: {exc}")
         r.setex(
             f"result:{job_id}",
             RESULT_TTL_SECONDS,
