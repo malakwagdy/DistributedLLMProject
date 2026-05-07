@@ -8,5 +8,11 @@ services:
       - HEARTBEAT_INTERVAL_SECONDS=2
       - HEARTBEAT_TTL_SECONDS=8
       - RESULT_TTL_SECONDS=300
+      - HOST_PROC=/host/proc
+      - HOST_SYS=/host/sys
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    # Mount host system stats
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
