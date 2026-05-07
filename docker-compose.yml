@@ -1,4 +1,9 @@
 services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+  
   master:
     build: ./master
     ports:
@@ -11,6 +16,8 @@ services:
       - MAX_ATTEMPTS=3
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    depends_on:
+      - redis
 
   gateway:
     build: ./gateway
@@ -23,3 +30,4 @@ services:
       - "host.docker.internal:host-gateway"
     depends_on:
       - master
+      - redis
