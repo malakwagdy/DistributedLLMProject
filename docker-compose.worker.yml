@@ -1,16 +1,16 @@
 services:
   worker:
     build: ./worker
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
     environment:
-      - REDIS_URL=redis://host.docker.internal:6379
-      - OLLAMA_URL=http://host.docker.internal:11434
+      - REDIS_URL=redis://100.68.227.68:6379
+      - OLLAMA_URL=${REMOTE_OLLAMA_URL}
       - OLLAMA_MODEL=smollm:135m
       - HEARTBEAT_INTERVAL_SECONDS=2
       - HEARTBEAT_TTL_SECONDS=8
