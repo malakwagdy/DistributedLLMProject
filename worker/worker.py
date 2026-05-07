@@ -56,9 +56,6 @@ def process_one_task(task_payload):
     
     # Track start time
     start_time = time.time()
-    
-    # Log CPU/GPU for this task (no latency yet)
-    log_performance(WORKER_ID, job_id)
 
     context = retrieve_context(task["prompt"], top_k=3)
     full_prompt = (
@@ -74,7 +71,7 @@ def process_one_task(task_payload):
     
     log_activity(f"Worker {WORKER_ID} completed task {job_id} in {latency:.2f}s")
     
-    # Log completion with latency
+    # Log only once when task completes with latency
     log_performance(WORKER_ID, job_id, latency_seconds=latency)
     
     r.setex(
