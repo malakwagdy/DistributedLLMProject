@@ -20,7 +20,12 @@ r = redis.Redis(
     decode_responses=True
 )
 print(f"REDIS_URL = {os.getenv('REDIS_URL', 'NOT SET')}")
-WORKER_ID = os.getenv("HOSTNAME", "worker-unknown")
+
+# Get worker ID - use sequential number if available, otherwise hostname
+HOSTNAME = os.getenv("HOSTNAME", "worker-unknown")
+WORKER_NUMBER = r.incr("worker:counter")
+WORKER_ID = f"worker-{WORKER_NUMBER}"
+print(f"Worker ID: {WORKER_ID} (hostname: {HOSTNAME})")
 HEARTBEAT_INTERVAL_SECONDS = int(os.getenv("HEARTBEAT_INTERVAL_SECONDS", "2"))
 HEARTBEAT_TTL_SECONDS = int(os.getenv("HEARTBEAT_TTL_SECONDS", "8"))
 RESULT_TTL_SECONDS = int(os.getenv("RESULT_TTL_SECONDS", "300"))
