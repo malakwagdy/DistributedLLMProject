@@ -168,6 +168,7 @@ Create project-root `.env` (example template):
 # Gateway/master currently read REDIS_URL from their Compose environment blocks;
 # edit docker-compose.yml if your Redis host differs from what is baked in there.
 REDIS_URL=redis://<redis-host>:6379
+MASTER_URL=http://<master-host>:8001
 
 # Remote Ollama — used by worker_remote (main compose); ngrok/Kaggle tunnel URL.
 REMOTE_OLLAMA_URL=https://<ngrok-domain>
@@ -281,7 +282,7 @@ curl http://localhost:8001/health
 python3 test_client.py
 ```
 
-Adjust concurrency by editing `run_load_test(...)` at the bottom of `test_client.py` (or uncomment the suggested loop there).
+Adjust concurrency by editing `run_load_test(...)` at the bottom of `test_client.py` (or uncomment the loop there).
 
 `test_client.py` reports:
 
