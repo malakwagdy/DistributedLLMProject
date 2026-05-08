@@ -35,10 +35,11 @@ distributedLLM/
 │  └─ requirements.txt
 ├─ scripts/
 │  └─ kaggle_ollama_ngrok_setup.py
+├─ analyze_performance.py   # summarize logs/*_metrics.csv
+├─ monitor_dashboard.py     # optional: quick Redis worker/load snapshot
 ├─ docker-compose.yml
 ├─ docker-compose.worker.yml
 ├─ test_client.py
-├─ performance_metrics.csv
 └─ README.md
 ```
 
@@ -53,6 +54,7 @@ distributedLLM/
 5. Worker retrieves RAG context, calls Ollama, writes `result:<job_id>`.
 6. `gateway` polls `result:<job_id>` and returns response to client.
 7. Recovery loop in `master` reclaims stale/unreachable in-flight jobs and requeues (bounded attempts).
+8. When a worker’s heartbeat is gone, the master also drains **`worker_queue:<dead_worker>`** back to `incoming_tasks`, so assigned-but-not-started work is not stranded.
 
 ---
 
@@ -137,6 +139,7 @@ Implemented mechanisms:
 
 - Worker heartbeat expiration indicates unreachable node.
 - Recovery loop scans `processing:*`, reclaims stale/unreachable jobs.
+- Drains **`worker_queue:*`** for workers that are no longer in `worker:*:heartbeat`, then requeues those tasks.
 - Requeues tasks while `attempts <= MAX_ATTEMPTS`.
 - Writes terminal error result if retries are exhausted.
 - Cancellation-aware scheduling:
@@ -161,9 +164,12 @@ Implemented mechanisms:
 Create project-root `.env` (example template):
 
 ```env
-# Core routing
+# Redis — required for worker_remote in docker-compose.yml (${REDIS_URL}).
+# Gateway/master currently read REDIS_URL from their Compose environment blocks;
+# edit docker-compose.yml if your Redis host differs from what is baked in there.
 REDIS_URL=redis://<redis-host>:6379
-MASTER_URL=http://<master-host>:8001
+
+# Remote Ollama — used by worker_remote (main compose); ngrok/Kaggle tunnel URL.
 REMOTE_OLLAMA_URL=https://<ngrok-domain>
 
 # Optional RAG artifact sync from S3/R2
@@ -199,7 +205,9 @@ Exposed services:
 docker compose -f docker-compose.worker.yml up --build --scale worker=2
 ```
 
-Use this when you want to add/scale workers independently.
+Use this when you want to add/scale workers independently. By default **`docker-compose.worker.yml`** sets `OLLAMA_URL=http://host.docker.internal:11434` (host Ollama). To use a remote endpoint instead, change `OLLAMA_URL` in that file or duplicate the pattern used by `worker_remote` in the main compose file.
+
+Worker metrics and activity logs are written under **`./logs`** on the host (mounted into `/app/logs` in the container). On Linux hosts with NVIDIA GPUs and `nvidia-smi` available in the image, GPU utilization columns in the CSV are meaningful; on macOS / Apple Silicon they often read `0%`.
 
 ---
 
@@ -273,6 +281,8 @@ curl http://localhost:8001/health
 python3 test_client.py
 ```
 
+Adjust concurrency by editing `run_load_test(...)` at the bottom of `test_client.py` (or uncomment the suggested loop there).
+
 `test_client.py` reports:
 
 - total requests
@@ -294,7 +304,7 @@ docker stop <worker-container-name>
 
 Then verify:
 
-- master logs show reclaim/requeue
+- master logs show `worker_unreachable`, reclaim/requeue, or drain of assigned queues
 - requests continue via remaining workers
 - final success/failure accounting is consistent.
 
@@ -303,8 +313,19 @@ Then verify:
 ## 13) Monitoring and Metrics
 
 - Queue/load visibility: `GET /health` from gateway and master.
-- Worker runtime logs include scheduling, cancellations, and errors.
-- `performance_metrics.csv` can be collected/analyzed for resource observations.
+- Worker stdout logs include scheduling, cancellations, and errors (timestamped).
+- With **`docker-compose.worker.yml`**, each worker appends CPU/GPU samples and task IDs to **`logs/<worker-id>_metrics.csv`** and appends high-level steps to **`logs/activity.log`** (see `worker/performance_monitor.py`).
+- Summarize per-node averages over those CSVs:
+
+```bash
+python3 analyze_performance.py
+```
+
+Optional local helper (reads Redis worker heartbeats/loads):
+
+```bash
+REDIS_URL=redis://<your-redis-host>:6379 python3 monitor_dashboard.py
+```
 
 Recommended for report quality:
 
@@ -314,6 +335,10 @@ Recommended for report quality:
 ---
 
 ## 14) Troubleshooting
+
+### Leftover queues after load tests (persistent Redis)
+
+If Redis is **shared or persistent**, unfinished tasks and results can remain in lists and keys after a client run ends, so workers may keep draining backlog while **no client is connected**. Before a new benchmark tier or strategy comparison, clear **test-related** keys (`incoming_tasks`, `worker_queue:*`, `processing_queue:*`, `processing:*`, `result:*`, `cancel:*`, and optionally `worker:*:load`) using your Redis admin workflow, or use a dedicated Redis **logical database** / dev instance. Avoid `FLUSHALL` unless this Redis is disposable.
 
 ### `504 Timed out waiting for response`
 
@@ -384,4 +409,7 @@ curl -X POST "http://localhost:8000/ask?prompt=test"
 
 # Run load test
 python3 test_client.py
+
+# Summarize worker CPU/GPU/task CSVs in logs/ (worker-only compose)
+python3 analyze_performance.py
 ```
