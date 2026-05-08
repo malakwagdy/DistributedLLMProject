@@ -244,3 +244,58 @@ This is a practical checklist of what is still needed, with concrete suggestions
   - Minimal path: document limitation and impact.
   - Advanced path: run multiple gateway instances behind NGINX/HAProxy.
 
+---
+
+## H) Teacher-Style Assessment — Technical Setup Only
+
+This subsection is **deliberately scoped** to what can be judged from **architecture, code, deployment (Compose/Docker), Redis data model, scheduler/recovery behavior, workers, RAG/LLM integration, load generator, and operational logs/metrics**. It does **not** consider the **demo video**, **written report**, or **presentation/slides** — those are separate submission artifacts.
+
+### Verdict
+
+For a distributed-systems project graded **only on the technical implementation and runtime behavior**, this setup is **strong**: queue-based ingress, a dedicated scheduler with multiple strategies, heartbeat-based liveness, stale/in-flight reclaim with bounded retries, **dead-worker drain of `worker_queue:<id>`** (verified in practice: stopping a worker led to queued work being requeued and handled by remaining workers), cooperative cancellation after gateway timeout, and RAG + LLM inference on workers. Documentation in-repo (README, Redis model) matches how the system actually runs.
+
+What keeps it from reading as “complete technical excellence” is mostly **engineering polish and reproducible proof**, not missing core features: automated benchmark campaigns, persisted reconciliation by job ID, targeted Redis hygiene between runs, and harder inference-path resilience (retries/non-200 handling).
+
+### Technical strengths (instructor lens)
+
+- Clear separation of roles: gateway vs master vs workers; Redis as coordination backbone.
+- Three scheduling policies that are switchable at runtime and reflected in health/strategy keys.
+- Fault tolerance that covers both **in-flight** (`processing:*`, processing queues) and **assigned-but-not-started** queues on unreachable workers.
+- Observable failure semantics: timestamped logs, explicit `worker_unreachable` / reclaim logging, `/health` endpoints.
+- RAG pipeline (FAISS build, optional remote artifact sync) integrated into the worker path.
+
+### Technical gaps (still fair game for code review)
+
+- **Evidence automation**: load sweeps (e.g. 100→1000+) and strategy × failure scenarios are not packaged as one repeatable script run with archived outputs (only manual `test_client.py` usage today).
+- **Reconciliation artifact**: no single exported artifact proving “every submitted `job_id` ended in success, structured failure, cancel/timeout, or exhaustion” without silent drop.
+- **Operational hygiene**: no checked-in `scripts/redis_cleanup.py` (or equivalent) for persistent external Redis between benchmark tiers.
+- **Inference robustness**: `process_with_llm` does not yet standardize retries/backoff or structured handling for non-JSON / non-200 responses from Ollama.
+- **Resilience story**: single gateway process remains an architectural SPOF unless replicated or explicitly accepted as a documented limitation (technical design choice, not a slide deck issue).
+
+### Rough technical band (implementation-only, not full course grade)
+
+If an instructor graded **only** the technical stack and your **verified** worker-failure behavior: **high partial to excellent** — roughly **mid‑80s upward** on implementation alone, with the caveat that **scalability and fault-tolerance claims** still land stronger when backed by the automated matrix + reconciliation outputs above. Full course marks still depend on submission components outside this section.
+
+---
+
+## I) What Is Currently Missing — Consolidated (Technical / Evidence)
+
+Single checklist of gaps **as of this document revision**. Excludes demo video, formal report narrative, and presentation; those are not listed here.
+
+| Area | Missing item | Notes |
+|------|----------------|-------|
+| Benchmarking | Scripted matrix (load × strategy × optional worker kill) | Orchestrator + archived CSV/JSON per run |
+| Redis ops | Targeted cleanup utility | Avoid `FLUSHALL`; delete queue/processing/result/cancel keys between campaigns |
+| Traceability | Per-request reconciliation export | Map `job_id` → final outcome from client (and optionally gateway logs) |
+| Worker | Ollama call retries + backoff | Timeouts, connection/SSL/transient remote failures |
+| Worker | Explicit non-200 / parse-error path | Return structured error in `result:<job_id>` consistently |
+| Observability | Persisted load-test summaries | One file per run (latency, throughput, status histograms) |
+| Architecture | Gateway HA or documented SPOF | Either NGINX/duplicate gateways or explicit limitation in README |
+| Optional spec alignment | Literal NGINX/HAProxy front door | Your gateway fulfills “load balancer” logically; literal proxy is optional |
+| GPU narrative | In-container NVIDIA vs remote GPU | README should state clearly where inference runs (local vs remote Ollama / GPU) |
+
+### Verified behavior (technical proof already in hand)
+
+- **Worker loss**: After dropping one worker, **queued jobs for that worker were reclaimed and rescheduled** to surviving workers; master logs should show `worker_unreachable` and drain/requeue activity. This closes the earlier risk around stranded `worker_queue:*` work.
+
+---
